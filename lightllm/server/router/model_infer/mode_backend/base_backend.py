@@ -256,13 +256,20 @@ class ModeBackend:
         prof_mode = self.args.enable_profiling
         self.profiler = ProcessProfiler(mode=prof_mode, name=prof_name, use_multi_thread=True) if prof_mode else None
 
+        # EPLB creates additional process groups after model initialization.
+        # Its inference loops are started by ModelRpcServer once every rank has
+        # finished that collective initialization.
+        if not self.args.enable_prefill_eplb:
+            self.start_infer_loops()
+        return
+
+    def start_infer_loops(self):
         # 启动infer_loop_thread, 启动两个线程进行推理，对于具备双batch推理折叠得场景
         # 可以降低 cpu overhead，大幅提升gpu得使用率。
         self.infer_loop_thread = threading.Thread(target=self.infer_loop, daemon=True)
         self.infer_loop_thread.start()
         self.infer_loop_thread1 = threading.Thread(target=self.infer_loop, daemon=True)
         self.infer_loop_thread1.start()
-        return
 
     def init_custom(self):
         pass
