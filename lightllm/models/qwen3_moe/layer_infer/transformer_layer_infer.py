@@ -98,7 +98,9 @@ class Qwen3MOETransformerLayerInfer(LlamaTransformerLayerInfer):
         hidden_states = input
         token_num, hidden_dim = hidden_states.shape
 
-        router_logits = layer_weight.moe_gate.mm(hidden_states)
+        router_logits = None
+        if not (infer_state.is_prefill and layer_weight.experts.has_full_force_balanced_prefill_routing()):
+            router_logits = layer_weight.moe_gate.mm(hidden_states)
         ep_output = layer_weight.experts.experts(
             hidden_states,
             router_logits=router_logits,
@@ -265,7 +267,9 @@ class Qwen3MOETransformerLayerInfer(LlamaTransformerLayerInfer):
         input_embdings.add_(_0_o.view(-1, self.embed_dim_))
         _0_o = None
         _0_input1 = self._ffn_norm(input_embdings, infer_state, layer_weight)
-        _0_router_logits = layer_weight.moe_gate.mm(_0_input1)
+        full_force_balanced = layer_weight.experts.has_full_force_balanced_prefill_routing()
+
+        _0_router_logits = None if full_force_balanced else layer_weight.moe_gate.mm(_0_input1)
 
         # wait last 1 combine
         if getattr(infer_state1, "hook", None) is not None:
@@ -292,7 +296,7 @@ class Qwen3MOETransformerLayerInfer(LlamaTransformerLayerInfer):
         _1_input1 = self._ffn_norm(input_embdings1, infer_state1, layer_weight)
         # to do gate and disptatch
 
-        _1_router_logits = layer_weight.moe_gate.mm(_1_input1)
+        _1_router_logits = None if full_force_balanced else layer_weight.moe_gate.mm(_1_input1)
 
         # 0 dispatch execute
         (

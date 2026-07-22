@@ -217,6 +217,10 @@ class FusedMoeWeight(BaseWeightTpl):
             shared_expert_gate=shared_expert_gate,
         )
 
+    def has_full_force_balanced_prefill_routing(self) -> bool:
+        check = getattr(self.fuse_moe_impl, "has_full_force_balanced_prefill_routing", None)
+        return bool(check is not None and check())
+
     def low_latency_dispatch(
         self,
         hidden_states: torch.Tensor,

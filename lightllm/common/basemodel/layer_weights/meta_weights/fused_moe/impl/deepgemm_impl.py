@@ -17,7 +17,10 @@ from lightllm.common.basemodel.triton_kernel.fused_moe.grouped_fused_moe_ep impo
 )
 from lightllm.common.basemodel.triton_kernel.fused_moe.moe_silu_and_mul import silu_and_mul_fwd
 from lightllm.common.triton_utils.autotuner import Autotuner
-from lightllm.common.basemodel.triton_kernel.fused_moe.force_balanced_routing import force_balanced_routing
+from lightllm.common.basemodel.triton_kernel.fused_moe.force_balanced_routing import (
+    force_balanced_routing,
+    get_cached_force_balanced_routing,
+)
 from lightllm.common.basemodel.triton_kernel.fused_moe.eplb_kernels import eplb_map_fast
 from lightllm.utils.device_utils import is_sm100_gpu
 
@@ -42,6 +45,12 @@ class FuseMoeDeepGEMM(FuseMoeTriton):
         self.eplb_recording = False
         self.ep_balance_counters = None
         self._primary_weight_pack_cache = {}
+
+    def has_full_force_balanced_prefill_routing(self) -> bool:
+        return (
+            self.eplb_experts_logical_to_physical_map is None
+            and get_force_balanced_prefill_routing_ratio() == 1.0
+        )
 
     def configure_eplb(
         self,
@@ -89,6 +98,25 @@ class FuseMoeDeepGEMM(FuseMoeTriton):
         """Select experts and return topk weights and ids."""
         assert shared_expert_gate is None, "fused shared expert as MoE is not supported by DeepGEMM fused MoE"
         eplb_active = self.eplb_experts_logical_to_physical_map is not None
+        routing_ratio = get_force_balanced_prefill_routing_ratio() if is_prefill is True and not eplb_active else 0.0
+        if routing_ratio == 1.0:
+            # Full force-balanced routing is input-independent. Reuse immutable
+            # templates populated by the service benchmark warmups and skip the
+            # real router/top-k path entirely.
+            topk_ids, topk_weights = get_cached_force_balanced_routing(
+                input_tensor.shape[0],
+                top_k,
+                expert_num=self.n_routed_experts,
+                global_rank=self.global_rank_,
+                world_size=self.global_world_size_,
+                routing_weight=self.routed_scaling_factor / top_k,
+                device=input_tensor.device,
+            )
+            if per_expert_scale is not None:
+                topk_weights = topk_weights * per_expert_scale[topk_ids].to(topk_weights.dtype)
+            return topk_weights, topk_ids, topk_ids
+
+        assert router_logits is not None, "router_logits is required unless full force-balanced prefill is enabled"
         # For grouped prefill, selecting logical IDs, then launching a second
         # kernel to count and remap them is avoidable.  Keep every observable
         # logical-ID path on the generic implementation: callbacks and
@@ -145,7 +173,6 @@ class FuseMoeDeepGEMM(FuseMoeTriton):
         if per_expert_scale is not None:
             topk_weights = topk_weights * per_expert_scale[topk_ids.to(torch.long)].to(topk_weights.dtype)
         if is_prefill is True and not eplb_active:
-            routing_ratio = get_force_balanced_prefill_routing_ratio()
             if routing_ratio > 0.0:
                 force_balanced_routing(
                     topk_ids,

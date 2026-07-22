@@ -2,7 +2,9 @@ import pytest
 import torch
 
 from lightllm.common.basemodel.triton_kernel.fused_moe.force_balanced_routing import (
+    clear_force_balanced_routing_cache,
     force_balanced_routing,
+    get_cached_force_balanced_routing,
 )
 from lightllm.utils import envs_utils
 
@@ -139,6 +141,38 @@ def test_force_balanced_routing_supports_top_k_smaller_than_world_size():
     assert all(torch.unique(row).numel() == top_k for row in rows)
     assert assigned_ids.min() >= 0
     assert assigned_ids.max() < expert_num
+
+
+@CUDA_REQUIRED
+def test_cached_full_force_routing_reuses_power_of_two_template():
+    clear_force_balanced_routing_cache()
+    ids_65, weights_65 = get_cached_force_balanced_routing(
+        65,
+        8,
+        expert_num=256,
+        global_rank=3,
+        world_size=32,
+        routing_weight=0.3125,
+        device=torch.device("cuda"),
+    )
+    ids_100, weights_100 = get_cached_force_balanced_routing(
+        100,
+        8,
+        expert_num=256,
+        global_rank=3,
+        world_size=32,
+        routing_weight=0.3125,
+        device=torch.device("cuda"),
+    )
+
+    assert ids_65.data_ptr() == ids_100.data_ptr()
+    assert weights_65.data_ptr() == weights_100.data_ptr()
+    assert ids_65.dtype == torch.int64
+    assert weights_65.dtype == torch.float32
+    assert torch.all(weights_100 == 0.3125)
+    assert torch.equal(ids_65, ids_100[:65])
+    assert torch.all((ids_100 >= 0) & (ids_100 < 256))
+    assert all(torch.unique(row).numel() == 8 for row in ids_100)
 
 
 @CUDA_REQUIRED

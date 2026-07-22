@@ -266,8 +266,10 @@ class Deepseek2TransformerLayerInfer(LlamaTransformerLayerInfer):
         if self.n_shared_experts is not None:
             shared_output = LlamaTransformerLayerInfer._ffn_tp(self, hidden_states, infer_state, layer_weight)
 
-        moe_gate_dtype = layer_weight.moe_gate.data_type_
-        router_logits = layer_weight.moe_gate.mm(hidden_states.to(moe_gate_dtype))
+        router_logits = None
+        if not (infer_state.is_prefill and layer_weight.experts.has_full_force_balanced_prefill_routing()):
+            moe_gate_dtype = layer_weight.moe_gate.data_type_
+            router_logits = layer_weight.moe_gate.mm(hidden_states.to(moe_gate_dtype))
         ep_output = layer_weight.experts.experts(
             hidden_states,
             router_logits=router_logits,
@@ -523,8 +525,13 @@ class Deepseek2TransformerLayerInfer(LlamaTransformerLayerInfer):
         input_embdings.add_(_0_o.view(-1, self.embed_dim_))
         _0_o = None
         _0_input1 = self._ffn_norm(input_embdings, infer_state, layer_weight)
-        moe_gate_dtype = layer_weight.moe_gate.data_type_
-        _0_router_logits = layer_weight.moe_gate.mm(_0_input1.to(moe_gate_dtype))
+        full_force_balanced = layer_weight.experts.has_full_force_balanced_prefill_routing()
+
+        if full_force_balanced:
+            _0_router_logits = None
+        else:
+            moe_gate_dtype = layer_weight.moe_gate.data_type_
+            _0_router_logits = layer_weight.moe_gate.mm(_0_input1.to(moe_gate_dtype))
 
         # wait last 1 combine
         if getattr(infer_state1, "hook", None) is not None:
@@ -551,8 +558,11 @@ class Deepseek2TransformerLayerInfer(LlamaTransformerLayerInfer):
         _1_input1 = self._ffn_norm(input_embdings1, infer_state1, layer_weight)
         # to do gate and disptatch
 
-        moe_gate_dtype = layer_weight.moe_gate.data_type_
-        _1_router_logits = layer_weight.moe_gate.mm(_1_input1.to(moe_gate_dtype))
+        if full_force_balanced:
+            _1_router_logits = None
+        else:
+            moe_gate_dtype = layer_weight.moe_gate.data_type_
+            _1_router_logits = layer_weight.moe_gate.mm(_1_input1.to(moe_gate_dtype))
 
         # 0 dispatch execute
         (
