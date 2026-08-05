@@ -154,12 +154,6 @@ def _launch_subprocesses(args: StartArgs):
         # EPLB updates expert weights in place, but SM100 Mega-MoE caches transformed weights by tensor data_ptr.
         assert not is_sm100_gpu(), "--enable_prefill_eplb does not support SM100"
         assert (
-            args.ep_redundancy_expert_config_path is None
-        ), "--enable_prefill_eplb cannot be enabled with --ep_redundancy_expert_config_path"
-        assert (
-            not args.auto_update_redundancy_expert
-        ), "--enable_prefill_eplb and --auto_update_redundancy_expert cannot be enabled together"
-        assert (
             args.eplb_num_redundant_experts_per_rank > 0
         ), "--eplb_num_redundant_experts_per_rank must be greater than 0"
         assert args.mtp_mode is None, "--enable_prefill_eplb does not support MTP modes"
